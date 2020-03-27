@@ -27,6 +27,7 @@ import org.junit.Test;
 
 import com.aerospike.client.DebugAerospikeClient.Granularity;
 import com.aerospike.client.DebugAerospikeClient.Options;
+import com.aerospike.client.cluster.ClusterUtilites;
 
 
 public class TestDebugAerospikeClient {
@@ -229,6 +230,9 @@ public class TestDebugAerospikeClient {
 		Options options = new Options(Granularity.EVERY_CALL, Granularity.EVERY_CALL, Granularity.EVERY_CALL);
 		
 		IAerospikeClient client = new DebugAerospikeClient(HOST, 3000, options);
+
+		ClusterUtilites info = new ClusterUtilites(client);
+		info.printInfo();
 
 		executors.execute(new Processor(client, 0));
 		try {

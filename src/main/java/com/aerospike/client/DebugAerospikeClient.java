@@ -62,7 +62,25 @@ import com.aerospike.client.task.RegisterTask;
 
 public class DebugAerospikeClient implements IAerospikeClient {
 
-	public enum Granularity {
+	private static enum PutOperation {
+		ADD("Add"),
+		APPEND("Append"),
+		DELETE("Delete"),	// TODO: Should this really be counted as a put, especially if non-durable?
+		OPERATE("Operate"),
+		PREPEND("Prepend"),
+		PUT("Put"),
+		TOUCH("Touch");
+		
+		private String operationName;
+		private PutOperation(String name) {
+			this.operationName = name;
+		}
+		public String getName() {
+			return operationName;
+		}
+	}
+
+	public static enum Granularity {
 		EVERY_CALL(0),
 		EVERY_SECOND(1),
 		EVERY_10_SECONDS(10),
@@ -316,7 +334,20 @@ public class DebugAerospikeClient implements IAerospikeClient {
 	public DebugAerospikeClient(ClientPolicy policy, Host... hosts) throws AerospikeException {
 		delegate = new AerospikeClient(policy, hosts);
 	}
+
+	// -----------------------------
+	// Utilities
+	// -----------------------------
 	
+	
+	// -----------------------------
+	// Logging information
+	// -----------------------------
+	/**
+	 * This thread polls the loggers at regular intervals and dumps the stats out the passed print stream.
+	 * @author timfaulkes
+	 *
+	 */
 	private class Logger implements Runnable {
 		private volatile boolean started = false;
 		private int findMinimumDelayTime() {
@@ -431,8 +462,12 @@ public class DebugAerospikeClient implements IAerospikeClient {
 		}
 	}
 
+	/**
+	 * Get the current stack trace as a string, removing this method from the trace
+	 * 
+	 * @return the stack trace
+	 */
 	private String getStackTrace() {
-		// get the stack trace, removing this method from the trace.
 		Exception e = new Exception();
 		StackTraceElement[] elements = e.getStackTrace();
 		e.setStackTrace(Arrays.copyOfRange(elements, 1, elements.length));
@@ -442,6 +477,17 @@ public class DebugAerospikeClient implements IAerospikeClient {
 		return sw.toString();
 	}
 	
+	private long startBatchTime() {
+		return (options != null && options.getBatchLogging() != Granularity.NEVER) ? System.nanoTime() : 0;
+	}
+	
+	private void endBatchTime(long startTime, Key[] keys, Record[] records, AerospikeException ae) {
+		if (startTime > 0) {
+			long totalTimeUs = (System.nanoTime() - startTime)/1000;
+			logBatchTimes(totalTimeUs, keys, records, ae);
+		}
+	}
+
 	private void logBatchTimes(long timeInUs, Key[] keys, Record[] records, AerospikeException ae) {
 		int total = keys.length;
 		int successful = 0;
@@ -461,13 +507,24 @@ public class DebugAerospikeClient implements IAerospikeClient {
 		}
 	}
 	
-	private void logPutTimes(long timeInUs, Key key, boolean isOperate, AerospikeException ae) {
+	private long startPutTime() {
+		return (options != null && options.getPutLogging() != Granularity.NEVER) ? System.nanoTime() : 0;
+	}
+	
+	private void endPutTime(long startTime, Key key, PutOperation operation, AerospikeException ae) {
+		if (startTime > 0) {
+			long totalTimeUs = (System.nanoTime() - startTime)/1000;
+			logPutTimes(totalTimeUs, key, operation, ae);
+		}
+	}
+
+	private void logPutTimes(long timeInUs, Key key, PutOperation operation, AerospikeException ae) {
 		if (options.getPutLogging() == Granularity.EVERY_CALL) {
 			if (ae != null) {
-				options.stream.printf("%s: [%s] threw %s (%d:%s) in %,.3fms\n", isOperate ? "Operate" : "Put", key.toString(), ae.getClass(), ae.getResultCode(), ae.getMessage(), timeInUs/1000.0);
+				options.stream.printf("%s: [%s] threw %s (%d:%s) in %,.3fms\n", operation.getName(), key.toString(), ae.getClass(), ae.getResultCode(), ae.getMessage(), timeInUs/1000.0);
 			}
 			else {
-				options.stream.printf("%s: [%s] took %,.3fms\n", isOperate ? "Operate" : "Put", key.toString(), timeInUs/1000.0);
+				options.stream.printf("%s: [%s] took %,.3fms\n", operation.getName(), key.toString(), timeInUs/1000.0);
 			}
 		}
 		else if (options.getPutLogging()  != Granularity.NEVER) {
@@ -475,6 +532,17 @@ public class DebugAerospikeClient implements IAerospikeClient {
 		}
 	}
 	
+	private long startGetTime() {
+		return (options != null && options.getGetLogging() != Granularity.NEVER) ? System.nanoTime() : 0;
+	}
+	
+	private void endGetTime(long startTime, Key key, Record result, AerospikeException ae) {
+		if (startTime > 0) {
+			long totalTimeUs = (System.nanoTime() - startTime)/1000;
+			logGetTimes(totalTimeUs, key, result, ae);
+		}
+	}
+
 	private void logGetTimes(long timeInUs, Key key, Record record, AerospikeException ae) {
 		if (options.getGetLogging() == Granularity.EVERY_CALL) {
 			if (ae != null) {
@@ -548,23 +616,13 @@ public class DebugAerospikeClient implements IAerospikeClient {
 	}
 
 	public void put(WritePolicy policy, Key key, Bin... bins) throws AerospikeException {
-		boolean recordTimes =  (options != null && options.getPutLogging() != Granularity.NEVER);
-		long now = 0;
-		if (recordTimes) {
-			now = System.nanoTime();
-		}
+		long now = startPutTime();
 		try {
 			delegate.put(policy, key, bins);
-			if (recordTimes) {
-				long totalTimeUs = (System.nanoTime() - now)/1000;
-				logPutTimes(totalTimeUs, key, false, null);
-			}
+			endPutTime(now, key, PutOperation.PUT, null);
 		}
 		catch (AerospikeException ae) {
-			if (recordTimes) {
-				long totalTimeUs = (System.nanoTime() - now)/1000;
-				logPutTimes(totalTimeUs, key, false, ae);
-			}
+			endPutTime(now, key, PutOperation.PUT, ae);
 			throw ae;
 		}
 	}
@@ -576,7 +634,15 @@ public class DebugAerospikeClient implements IAerospikeClient {
 	}
 
 	public void append(WritePolicy policy, Key key, Bin... bins) throws AerospikeException {
-		delegate.append(policy, key, bins);
+		long now = startPutTime(); 
+		try {
+			delegate.append(policy, key, bins);
+			endPutTime(now, key, PutOperation.APPEND, null);
+		}
+		catch (AerospikeException ae) {
+			endPutTime(now, key, PutOperation.APPEND, ae);
+			throw ae;
+		}
 	}
 
 	public void append(EventLoop eventLoop, WriteListener listener, WritePolicy policy, Key key, Bin... bins)
@@ -585,7 +651,15 @@ public class DebugAerospikeClient implements IAerospikeClient {
 	}
 
 	public void prepend(WritePolicy policy, Key key, Bin... bins) throws AerospikeException {
-		delegate.prepend(policy, key, bins);
+		long now = startPutTime(); 
+		try {
+			delegate.prepend(policy, key, bins);
+			endPutTime(now, key, PutOperation.PREPEND, null);
+		}
+		catch (AerospikeException ae) {
+			endPutTime(now, key, PutOperation.PREPEND, ae);
+			throw ae;
+		}
 	}
 
 	public void prepend(EventLoop eventLoop, WriteListener listener, WritePolicy policy, Key key, Bin... bins)
@@ -594,7 +668,15 @@ public class DebugAerospikeClient implements IAerospikeClient {
 	}
 
 	public void add(WritePolicy policy, Key key, Bin... bins) throws AerospikeException {
-		delegate.add(policy, key, bins);
+		long now = startPutTime(); 
+		try {
+			delegate.add(policy, key, bins);
+			endPutTime(now, key, PutOperation.ADD, null);
+		}
+		catch (AerospikeException ae) {
+			endPutTime(now, key, PutOperation.ADD, ae);
+			throw ae;
+		}
 	}
 
 	public void add(EventLoop eventLoop, WriteListener listener, WritePolicy policy, Key key, Bin... bins)
@@ -603,7 +685,16 @@ public class DebugAerospikeClient implements IAerospikeClient {
 	}
 
 	public boolean delete(WritePolicy policy, Key key) throws AerospikeException {
-		return delegate.delete(policy, key);
+		long now = startPutTime(); 
+		try {
+			boolean result = delegate.delete(policy, key);
+			endPutTime(now, key, PutOperation.DELETE, null);
+			return result;
+		}
+		catch (AerospikeException ae) {
+			endPutTime(now, key, PutOperation.DELETE, ae);
+			throw ae;
+		}
 	}
 
 	public void delete(EventLoop eventLoop, DeleteListener listener, WritePolicy policy, Key key)
@@ -617,7 +708,15 @@ public class DebugAerospikeClient implements IAerospikeClient {
 	}
 
 	public void touch(WritePolicy policy, Key key) throws AerospikeException {
-		delegate.touch(policy, key);
+		long now = startPutTime(); 
+		try {
+			delegate.touch(policy, key);
+			endPutTime(now, key, PutOperation.TOUCH, null);
+		}
+		catch (AerospikeException ae) {
+			endPutTime(now, key, PutOperation.TOUCH, ae);
+			throw ae;
+		}
 	}
 
 	public void touch(EventLoop eventLoop, WriteListener listener, WritePolicy policy, Key key)
@@ -648,24 +747,14 @@ public class DebugAerospikeClient implements IAerospikeClient {
 	}
 
 	public Record get(Policy policy, Key key) throws AerospikeException {
-		boolean recordTimes =  (options != null && options.getGetLogging() != Granularity.NEVER);
-		long now = 0;
-		if (recordTimes) {
-			now = System.nanoTime();
-		}
+		long now = startGetTime();
 		try {
 			Record result = delegate.get(policy, key);
-			if (recordTimes) {
-				long totalTimeUs = (System.nanoTime() - now)/1000;
-				logGetTimes(totalTimeUs, key, result, null);
-			}
+			endGetTime(now, key, result, null);
 			return result;
 		}
 		catch (AerospikeException ae) {
-			if (recordTimes) {
-				long totalTimeUs = (System.nanoTime() - now)/1000;
-				logGetTimes(totalTimeUs, key, null, ae);
-			}
+			endGetTime(now, key, null, ae);
 			throw ae;
 		}
 	}
@@ -675,24 +764,14 @@ public class DebugAerospikeClient implements IAerospikeClient {
 	}
 
 	public Record get(Policy policy, Key key, String... binNames) throws AerospikeException {
-		boolean recordTimes =  (options != null && options.getGetLogging() != Granularity.NEVER);
-		long now = 0;
-		if (recordTimes) {
-			now = System.nanoTime();
-		}
+		long now = startGetTime();
 		try {
 			Record result = delegate.get(policy, key, binNames);
-			if (recordTimes) {
-				long totalTimeUs = (System.nanoTime() - now)/1000;
-				logGetTimes(totalTimeUs, key, result, null);
-			}
+			endGetTime(now, key, result, null);
 			return result;
 		}
 		catch (AerospikeException ae) {
-			if (recordTimes) {
-				long totalTimeUs = (System.nanoTime() - now)/1000;
-				logGetTimes(totalTimeUs, key, null, ae);
-			}
+			endGetTime(now, key, null, ae);
 			throw ae;
 		}
 	}
@@ -726,24 +805,14 @@ public class DebugAerospikeClient implements IAerospikeClient {
 	}
 
 	public Record[] get(BatchPolicy policy, Key[] keys) throws AerospikeException {
-		boolean recordTimes =  (options != null && options.getBatchLogging() != Granularity.NEVER);
-		long now = 0;
-		if (recordTimes) {
-			now = System.nanoTime();
-		}
+		long now = startBatchTime();
 		try {
 			Record[] results = delegate.get(policy, keys);
-			if (recordTimes) {
-				long totalTimeUs = (System.nanoTime() - now)/1000;
-				logBatchTimes(totalTimeUs, keys, results, null);
-			}
+			endBatchTime(now, keys, results, null);
 			return results;
 		}
 		catch (AerospikeException ae) {
-			if (recordTimes) {
-				long totalTimeUs = (System.nanoTime() - now)/1000;
-				logBatchTimes(totalTimeUs, keys, null, ae);
-			}
+			endBatchTime(now, keys, null, ae);
 			throw ae;
 		}
 	}
@@ -759,24 +828,14 @@ public class DebugAerospikeClient implements IAerospikeClient {
 	}
 
 	public Record[] get(BatchPolicy policy, Key[] keys, String... binNames) throws AerospikeException {
-		boolean recordTimes =  (options != null && options.getBatchLogging() != Granularity.NEVER);
-		long now = 0;
-		if (recordTimes) {
-			now = System.nanoTime();
-		}
+		long now = startBatchTime();
 		try {
 			Record[] results = delegate.get(policy, keys, binNames);
-			if (recordTimes) {
-				long totalTimeUs = (System.nanoTime() - now)/1000;
-				logBatchTimes(totalTimeUs, keys, results, null);
-			}
+			endBatchTime(now, keys, results, null);
 			return results;
 		}
 		catch (AerospikeException ae) {
-			if (recordTimes) {
-				long totalTimeUs = (System.nanoTime() - now)/1000;
-				logBatchTimes(totalTimeUs, keys, null, ae);
-			}
+			endBatchTime(now, keys, null, ae);
 			throw ae;
 		}
 	}
@@ -806,24 +865,14 @@ public class DebugAerospikeClient implements IAerospikeClient {
 	}
 
 	public Record operate(WritePolicy policy, Key key, Operation... operations) throws AerospikeException {
-		boolean recordTimes =  (options != null && options.getPutLogging() != Granularity.NEVER);
-		long now = 0;
-		if (recordTimes) {
-			now = System.nanoTime();
-		}
+		long now = startPutTime();
 		try {
 			Record result = delegate.operate(policy, key, operations);
-			if (recordTimes) {
-				long totalTimeUs = (System.nanoTime() - now)/1000;
-				logPutTimes(totalTimeUs, key, true, null);
-			}
+			endPutTime(now, key, PutOperation.OPERATE, null);
 			return result;
 		}
 		catch (AerospikeException ae) {
-			if (recordTimes) {
-				long totalTimeUs = (System.nanoTime() - now)/1000;
-				logPutTimes(totalTimeUs, key, true, ae);
-			}
+			endPutTime(now, key, PutOperation.OPERATE, ae);
 			throw ae;
 		}
 	}
