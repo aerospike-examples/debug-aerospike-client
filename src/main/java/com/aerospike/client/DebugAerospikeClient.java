@@ -336,11 +336,6 @@ public class DebugAerospikeClient implements IAerospikeClient {
 	}
 
 	// -----------------------------
-	// Utilities
-	// -----------------------------
-	
-	
-	// -----------------------------
 	// Logging information
 	// -----------------------------
 	/**

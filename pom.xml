@@ -83,7 +83,7 @@
 					<archive>
 						<manifest>
 							<addClasspath>true</addClasspath>
-							<mainClass>com.visa.risk.poc.CsvLoader</mainClass>
+							<mainClass>com.aerospike.client.RunDebugAerospikeClient</mainClass>
 						</manifest>
 					</archive>
 					<finalName>${project.artifactId}-${project.version}-full</finalName>

@@ -1,11 +1,21 @@
 package com.aerospike.client.cluster;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 
 import com.aerospike.client.IAerospikeClient;
+import com.aerospike.client.Key;
+import com.aerospike.client.command.Buffer;
 
 /**
  * This class can be used to perform "interesting" operations on the cluster, such as determining the nodes in the cluster, the partition map, etc.
+ * <p/>
  * @author timfaulkes
  *
  */
@@ -19,35 +29,146 @@ public class ClusterUtilites {
 		this.cluster = nodes.length > 0 ? nodes[0].cluster : null;
 	}
 	
-	public void printInfo() {
-		Node[] nodes = client.getNodes();
-		for (Node node : nodes) {
-			System.out.printf("Node: %s [%s] %s %s\n", node.getName(), node.getAddress().getAddress().toString(), node.getAddress().getHostName(), node.getAddress().getHostString());
+	public int getPartitionForKey(Key key) {
+		return (Buffer.littleBytesToInt(key.digest, 0) & 0xFFFF) % Node.PARTITIONS;
+	}
+	
+	public String findKeyOnSpecificNodes(Node master, Node replica, String namespace, String set) {
+		if (cluster == null) {
+			throw new IllegalArgumentException("findKeyOnSpecificNodes cannot be called if there is no cluster information");
 		}
+		Map<String, Partitions> partitionMap = this.cluster.partitionMap;
+		Partitions partitions = partitionMap.get(namespace);
+		if (partitions == null) {
+			throw new IllegalArgumentException("Namespace " + namespace + " does not exist");
+		}
+		AtomicReferenceArray<Node>[] replicas = partitions.replicas;
 
+		Set<Integer> partitionsOnMaster = new HashSet<>();
+		Set<Integer> partitionsOnReplica = new HashSet<>();
+		
+		if (replicas.length < 2) {
+			return null;
+		}
+		for (int replicaId = 0; replicaId < replicas.length; replicaId++) {
+			for (int partId = 0; partId < replicas[replicaId].length(); partId++) {
+				Node node = replicas[replicaId].get(partId);
+				if (node.equals(master) && replicaId == 0) {
+					partitionsOnMaster.add(partId);
+				}
+				else if (node.equals(replica) && replicaId == 1) {
+					partitionsOnReplica.add(partId);
+				}
+			}
+		}
+		if (partitionsOnReplica.isEmpty() || partitionsOnMaster.isEmpty()) {
+			return null;
+		}
+		for (int i = 0; i < 100000; i++) {
+			String keyName = "key" + i;
+			Key key = new Key(namespace, set, keyName);
+			int partitionId = getPartitionForKey(key);
+			if (partitionsOnMaster.contains(partitionId) && partitionsOnReplica.contains(partitionId)) {
+				return keyName;
+			}
+		}
+		return null;
+	}
+	
+	private void printPartMap(String namespace) {
+		Map<String, Partitions> partitionMap = this.cluster.partitionMap;
+		Partitions partitions = partitionMap.get(namespace);
+		if (partitions == null) {
+			return;
+		}
+		AtomicReferenceArray<Node>[] replicas = partitions.replicas;
+
+		Map<String, Map<Integer, Set<Integer>>> nodeToReplicaToParts = new HashMap<>();
+		for (int replicaId = 0; replicaId < replicas.length; replicaId++) {
+			for (int partId = 0; partId < replicas[replicaId].length(); partId++) {
+				Node node = replicas[replicaId].get(partId);
+				
+				Map<Integer, Set<Integer>> replicaToParts = nodeToReplicaToParts.get(node.getName());
+				if (replicaToParts == null) {
+					replicaToParts = new HashMap<>();
+					nodeToReplicaToParts.put(node.getName(), replicaToParts);
+				}
+				Set<Integer> parts = replicaToParts.get(replicaId);
+				if (parts == null) {
+					parts = new HashSet<>();
+					replicaToParts.put(replicaId, parts);
+				}
+				
+				parts.add(partId);
+			}
+		}
+		// Now iterate through each node and each replica
+		Node[] nodes = this.cluster.getNodes();
+		for (Node node : nodes) {
+			System.out.printf("   Node: %s\n", node.getName());
+			Map<Integer, Set<Integer>> replicaToParts = nodeToReplicaToParts.get(node.getName());
+			for (int i = 0; i < replicaToParts.size(); i++) {
+				System.out.printf("   Replica %d: ", i+1);
+				Set<Integer> parts = replicaToParts.get(i);
+				List<Integer> partList = new ArrayList<>(parts);
+				Collections.sort(partList);
+				
+				int lastOutput = -5;
+				int runCount = 0;
+				for (int k = 0; k < partList.size(); k++) {
+					int thisIndex = partList.get(k);
+					if (lastOutput+runCount == thisIndex) {
+						runCount++;
+					}
+					else {
+						if (runCount > 1) {
+							System.out.printf("-%d,", lastOutput+runCount-1);
+						}
+						else if (lastOutput >= 0) {
+							System.out.print(",");
+						}
+					  	lastOutput = thisIndex;
+					  	runCount = 1;
+						System.out.printf("%d", thisIndex);
+					}
+				}
+				if (runCount > 1) {
+					System.out.printf("-%d", lastOutput+runCount-1);
+				}
+				
+				System.out.println();
+			}
+		}
+	}
+	
+	public void printInfo() {
+		printInfo(false);
+	}
+	
+	public void printInfo(boolean printPartitionMap) {
 		System.out.println(cluster.clusterName == null ? "<unnamed cluster>" : cluster.clusterName);
 		System.out.println("----------------------");
 		System.out.printf("   Rack Aware: %b\n", cluster.rackAware);
+		System.out.println();
 		
+		System.out.println("Nodes in cluster");
+		System.out.println("----------------------");
+		Node[] nodes = client.getNodes();
+		for (Node node : nodes) {
+			System.out.printf("Node: %s [%s] %s\n", node.getName(), node.getAddress().getAddress().toString(), node.getAddress().getHostName());
+		}
+		System.out.println();
+
 		HashMap<String, Partitions> partitionMap = this.cluster.partitionMap;
 		for (String namespace : partitionMap.keySet()) {
 			System.out.println(namespace);
 			System.out.println("----------------------");
 			Partitions theseParts = partitionMap.get(namespace);
 			System.out.printf("   Strong Consistency: %b\n", theseParts.scMode);
-			// TODO: This code will be used to play with the partition map, eg "Find a key which would have a master on node A, replica on node C"
-			// which could be used for destructive testing especially in SC mode.
-			/*
-			System.out.printf("%d\n", theseParts.replicas.length);
-			AtomicReferenceArray<Node>[] x = theseParts.replicas;
-			AtomicReferenceArray<Node> y = theseParts.replicas[0];
-			System.out.println(y.length());
-			for (int i = 0; i < y.length(); i++) {
-				Node z = y.get(i);
-				System.out.printf("%d - %s\n", i, z.getName());
+			if (printPartitionMap) {
+				printPartMap(namespace);
 			}
-			*/
+			System.out.println();
 		}
-		System.out.println();
 	}
 }
