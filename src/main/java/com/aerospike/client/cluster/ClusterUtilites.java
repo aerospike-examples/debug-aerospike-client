@@ -75,7 +75,7 @@ public class ClusterUtilites {
 		return null;
 	}
 	
-	private void printPartMap(String namespace) {
+	private void printPartMap(String namespace, int maxLength) {
 		Map<String, Partitions> partitionMap = this.cluster.partitionMap;
 		Partitions partitions = partitionMap.get(namespace);
 		if (partitions == null) {
@@ -108,11 +108,11 @@ public class ClusterUtilites {
 			System.out.printf("   Node: %s\n", node.getName());
 			Map<Integer, Set<Integer>> replicaToParts = nodeToReplicaToParts.get(node.getName());
 			for (int i = 0; i < replicaToParts.size(); i++) {
-				System.out.printf("   Replica %d: ", i+1);
+				System.out.printf("      Replica %d: ", i+1);
 				Set<Integer> parts = replicaToParts.get(i);
 				List<Integer> partList = new ArrayList<>(parts);
 				Collections.sort(partList);
-				
+				StringBuffer buffer = new StringBuffer();
 				int lastOutput = -5;
 				int runCount = 0;
 				for (int k = 0; k < partList.size(); k++) {
@@ -122,21 +122,29 @@ public class ClusterUtilites {
 					}
 					else {
 						if (runCount > 1) {
-							System.out.printf("-%d,", lastOutput+runCount-1);
+							buffer.append("-").append(lastOutput+runCount-1).append(",");
 						}
 						else if (lastOutput >= 0) {
-							System.out.print(",");
+							buffer.append(",");
 						}
 					  	lastOutput = thisIndex;
 					  	runCount = 1;
-						System.out.printf("%d", thisIndex);
+					  	buffer.append(thisIndex);
+					}
+					if (maxLength > 0 && buffer.length() > maxLength ) {
+						break;
 					}
 				}
 				if (runCount > 1) {
-					System.out.printf("-%d", lastOutput+runCount-1);
+					buffer.append("-").append(lastOutput+runCount-1);
 				}
 				
-				System.out.println();
+				if (maxLength > 0 && buffer.length() > maxLength) {
+					System.out.println(buffer.toString().substring(0, maxLength)+"...");
+				}
+				else {
+					System.out.println(buffer.toString());
+				}
 			}
 		}
 	}
@@ -145,7 +153,11 @@ public class ClusterUtilites {
 		printInfo(false);
 	}
 	
-	public void printInfo(boolean printPartitionMap) {
+	public void printInfo(boolean printPartMap) {
+		printInfo(printPartMap, 0);
+	}
+	
+	public void printInfo(boolean printPartitionMap, int length) {
 		System.out.println(cluster.clusterName == null ? "<unnamed cluster>" : cluster.clusterName);
 		System.out.println("----------------------");
 		System.out.printf("   Rack Aware: %b\n", cluster.rackAware);
@@ -166,7 +178,7 @@ public class ClusterUtilites {
 			Partitions theseParts = partitionMap.get(namespace);
 			System.out.printf("   Strong Consistency: %b\n", theseParts.scMode);
 			if (printPartitionMap) {
-				printPartMap(namespace);
+				printPartMap(namespace, length);
 			}
 			System.out.println();
 		}
