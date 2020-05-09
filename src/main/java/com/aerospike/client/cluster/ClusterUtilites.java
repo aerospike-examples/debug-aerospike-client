@@ -33,6 +33,28 @@ public class ClusterUtilites {
 		return (Buffer.littleBytesToInt(key.digest, 0) & 0xFFFF) % Node.PARTITIONS;
 	}
 	
+	public Node[] findAllNodesForKey(Key key) {
+		return findAllNodesForPartition(key.namespace, getPartitionForKey(key));
+	}
+	
+	public Node[] findAllNodesForPartition(String namespace, int partId) {
+		if (cluster == null) {
+			throw new IllegalArgumentException("findKeyOnSpecificNodes cannot be called if there is no cluster information");
+		}
+		Map<String, Partitions> partitionMap = this.cluster.partitionMap;
+		Partitions partitions = partitionMap.get(namespace);
+		if (partitions == null) {
+			throw new IllegalArgumentException("Namespace " + namespace + " does not exist");
+		}
+		Node[] nodes = new Node[partitions.replicas.length];
+		AtomicReferenceArray<Node>[] replicas = partitions.replicas;
+		for (int replicaId = 0; replicaId < replicas.length; replicaId++) {
+			nodes[replicaId] = replicas[replicaId].get(partId);
+		}
+		return nodes;
+	}
+	
+	
 	public String findKeyOnSpecificNodes(Node master, Node replica, String namespace, String set) {
 		if (cluster == null) {
 			throw new IllegalArgumentException("findKeyOnSpecificNodes cannot be called if there is no cluster information");
@@ -53,10 +75,10 @@ public class ClusterUtilites {
 		for (int replicaId = 0; replicaId < replicas.length; replicaId++) {
 			for (int partId = 0; partId < replicas[replicaId].length(); partId++) {
 				Node node = replicas[replicaId].get(partId);
-				if (node.equals(master) && replicaId == 0) {
+				if (node != null && node.equals(master) && replicaId == 0) {
 					partitionsOnMaster.add(partId);
 				}
-				else if (node.equals(replica) && replicaId == 1) {
+				else if (node != null && node.equals(replica) && replicaId == 1) {
 					partitionsOnReplica.add(partId);
 				}
 			}

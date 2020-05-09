@@ -21,6 +21,7 @@ public class RunDebugAerospikeClient {
 		System.out.println("   -f, --find <master,replica>  Find a key in the passed namespace and set such that the key has the designated master and replica nodes");
 		System.out.println("                                Master and Replica nodes can be designated either by node name, or specify 'any' for any 2 random nodes");
 		System.out.println("                                This option only works with 2 or more nodes");
+		System.out.println("   -k, --key id                 List all replicas for this key (in order). Requires -n and -s parameters");
 		System.out.println("   -t, --test <boolean>         Perform a put, get and delete in the namespace/set with log level EVERY_CALL (default: true)");
 		System.exit(-1);
 	}
@@ -36,6 +37,78 @@ public class RunDebugAerospikeClient {
 		return null;
 	}
 	
+	private static void findKeyOnNodes(IAerospikeClient client, ClusterUtilites utilities, String namespace, String setName, String nodesToFind) {
+		Node[] nodes = client.getNodes();
+		if (nodes.length > 2) {
+			Node masterNode = null, replicaNode = null;
+			if (nodesToFind.trim().compareToIgnoreCase("any") == 0) {
+				masterNode = nodes[0];
+				replicaNode = nodes[1];
+			}
+			else {
+				int index = nodesToFind.indexOf(',');
+				if (index > 0) {
+					masterNode = findNode(nodesToFind.substring(0, index), nodes);
+					replicaNode = findNode(nodesToFind.substring(index+1), nodes);
+				}
+				else {
+					System.out.printf("Incorrect node designation in --find argument. You specified '%s', expected format is 'any' or 'nodeName1,nodeName2'\n", nodesToFind);
+				}
+			}
+			if (masterNode != null && replicaNode != null) {
+				System.out.printf("Looking for key with master %s, replica %s\n", masterNode.getName(), replicaNode.getName());
+				String result = utilities.findKeyOnSpecificNodes(nodes[0], nodes[1], namespace, setName);
+				if (result == null) {
+					System.out.println("   No key found.");
+				}
+				else {
+					System.out.printf("    Key(%s, %s, %s) on partition %d\n", namespace, setName, result, utilities.getPartitionForKey(new Key(namespace, setName, result)));
+				}
+			}
+		}
+		else {
+			System.out.printf("%d node(s) in the cluster, not looking for key\n");
+		}
+	}
+
+	private static void findNodesForKey(ClusterUtilites utilities, String namespace, String setName, String keyId) {
+		int keyAsInt;
+		Key key;
+		
+		if (namespace == null || namespace.isEmpty()) {
+			System.out.println("Namesapce must be specified for finding nodes for a key");
+			usage();
+		}
+		if (setName == null || setName.isEmpty()) {
+			System.out.println("Set must be specified for finding nodes for a key");
+			usage();
+		}
+		try {
+			keyAsInt = Integer.parseInt(keyId);
+			key = new Key(namespace, setName, keyAsInt);
+		}
+		catch (NumberFormatException nfe) {
+			key = new Key(namespace, setName, keyId);
+		}
+		
+		Node[] nodes = utilities.findAllNodesForKey(key);
+		System.out.printf("For key: %s, master/replica nodes are:\n", key);
+		for (int i = 0; i < nodes.length; i++) {
+			switch(i) {
+			case 0:
+				System.out.printf("    Master: %s\n", nodes[i]);
+				break;
+			default:
+				if (nodes.length > 2) {
+					System.out.printf("    Replica %d: %s\n", i, nodes[i]);
+				}
+				else {
+					System.out.printf("    Replica: %s\n", nodes[i]);
+				}
+			}
+		}
+
+	}
 	public static void main(String[] args) {
 		String host = "127.0.0.1";
 		int port = 3000;
@@ -46,6 +119,7 @@ public class RunDebugAerospikeClient {
 		ClientPolicy clientPolicy = new ClientPolicy();
 		String nodesToFind = null;
 		boolean doInsert = true;
+		String keyId = null;
 
 		for (int i = 0; i < args.length-1; i+=2) {
 			switch (args[i]) {
@@ -89,6 +163,10 @@ public class RunDebugAerospikeClient {
 			case "-test":
 				doInsert = Boolean.valueOf(args[i+1]);
 				break;
+			case "-k":
+			case "-key":
+				keyId = args[i+1];
+				break;
 			case "-?":
 			case "--usage":
 				usage();
@@ -111,39 +189,13 @@ public class RunDebugAerospikeClient {
 		
 		if (nodesToFind != null) {
 			// Find a particular node which matches a certain criteria
-			Node[] nodes = client.getNodes();
-			if (nodes.length > 2) {
-				Node masterNode = null, replicaNode = null;
-				if (nodesToFind.trim().compareToIgnoreCase("any") == 0) {
-					masterNode = nodes[0];
-					replicaNode = nodes[1];
-				}
-				else {
-					int index = nodesToFind.indexOf(',');
-					if (index > 0) {
-						masterNode = findNode(nodesToFind.substring(0, index), nodes);
-						replicaNode = findNode(nodesToFind.substring(index+1), nodes);
-					}
-					else {
-						System.out.printf("Incorrect node designation in --find argument. You specified '%s', expected format is 'any' or 'nodeName1,nodeName2'\n", nodesToFind);
-					}
-				}
-				if (masterNode != null && replicaNode != null) {
-					System.out.printf("Looking for key with master %s, replica %s\n", masterNode.getName(), replicaNode.getName());
-					String result = utilites.findKeyOnSpecificNodes(nodes[0], nodes[1], namespace, setName);
-					if (result == null) {
-						System.out.println("   No key found.");
-					}
-					else {
-						System.out.printf("    Key(%s, %s, %s) on partition %d\n", namespace, setName, result, utilites.getPartitionForKey(new Key(namespace, setName, result)));
-					}
-				}
-			}
-			else {
-				System.out.printf("%d node(s) in the cluster, not looking for key\n");
-			}
+			findKeyOnNodes(client, utilites, namespace, setName, nodesToFind);
 		}		
 
+		if (keyId != null) {
+			findNodesForKey(utilites, namespace, setName, keyId);
+		}
+		
 		if (doInsert) {
 			Key key = new Key(namespace, setName, "testKey");
 			client.put(null, key, new Bin("name", "Bunyip"), new Bin("age", 312));
