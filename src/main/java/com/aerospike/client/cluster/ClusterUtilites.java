@@ -54,6 +54,9 @@ public class ClusterUtilites {
 		return nodes;
 	}
 	
+	public int[] getPartitionRegimes(String namespace) {
+		return this.cluster.partitionMap.get(namespace).regimes.clone();
+	}
 	
 	public String findKeyOnSpecificNodes(Node master, Node replica, String namespace, String set) {
 		if (cluster == null) {
