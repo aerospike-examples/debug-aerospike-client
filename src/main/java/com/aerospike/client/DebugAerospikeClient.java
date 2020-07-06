@@ -24,12 +24,14 @@ import java.io.StringWriter;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 import com.aerospike.client.AerospikeException.InvalidNode;
 import com.aerospike.client.admin.Privilege;
 import com.aerospike.client.admin.Role;
 import com.aerospike.client.admin.User;
 import com.aerospike.client.async.EventLoop;
+import com.aerospike.client.cluster.Cluster;
 import com.aerospike.client.cluster.ClusterStats;
 import com.aerospike.client.cluster.Node;
 import com.aerospike.client.listener.BatchListListener;
@@ -39,6 +41,8 @@ import com.aerospike.client.listener.ExecuteListener;
 import com.aerospike.client.listener.ExistsArrayListener;
 import com.aerospike.client.listener.ExistsListener;
 import com.aerospike.client.listener.ExistsSequenceListener;
+import com.aerospike.client.listener.IndexListener;
+import com.aerospike.client.listener.InfoListener;
 import com.aerospike.client.listener.RecordArrayListener;
 import com.aerospike.client.listener.RecordListener;
 import com.aerospike.client.listener.RecordSequenceListener;
@@ -53,6 +57,7 @@ import com.aerospike.client.policy.ScanPolicy;
 import com.aerospike.client.policy.WritePolicy;
 import com.aerospike.client.query.IndexCollectionType;
 import com.aerospike.client.query.IndexType;
+import com.aerospike.client.query.PartitionFilter;
 import com.aerospike.client.query.RecordSet;
 import com.aerospike.client.query.ResultSet;
 import com.aerospike.client.query.Statement;
@@ -84,6 +89,7 @@ public class DebugAerospikeClient implements IAerospikeClient {
 		EVERY_CALL(0),
 		EVERY_SECOND(1),
 		EVERY_10_SECONDS(10),
+		EVERY_MINUTE(60),
 		NEVER(0);
 		
 		private int frequency;
@@ -513,6 +519,7 @@ public class DebugAerospikeClient implements IAerospikeClient {
 		}
 	}
 
+	private AtomicLong thresholdCount = new AtomicLong(0); 
 	private void logPutTimes(long timeInUs, Key key, PutOperation operation, AerospikeException ae) {
 		if (options.getPutLogging() == Granularity.EVERY_CALL) {
 			if (ae != null) {
@@ -525,6 +532,11 @@ public class DebugAerospikeClient implements IAerospikeClient {
 		else if (options.getPutLogging()  != Granularity.NEVER) {
 			options.putLatencyManager.add(timeInUs, 0, ae != null ? 0 : 1);
 		}
+//		if (timeInUs > 30000) {
+//			if (thresholdCount.incrementAndGet() > 100) {
+//				options.stream.printf("Time Violation: call took %,.3fms\n%s\n", timeInUs/1000.0, getStackTrace());
+//			}
+//		}
 	}
 	
 	private long startGetTime() {
@@ -1026,7 +1038,7 @@ public class DebugAerospikeClient implements IAerospikeClient {
 	public List<Role> queryRoles(AdminPolicy policy) throws AerospikeException {
 		return delegate.queryRoles(policy);
 	}
-/*
+
 	@Override
 	public ExecuteTask execute(WritePolicy policy, Statement statement, Operation... operations)
 			throws AerospikeException {
@@ -1077,5 +1089,9 @@ public class DebugAerospikeClient implements IAerospikeClient {
 			throws AerospikeException {
 		info(eventLoop, listener, policy, node, commands);
 	}
-	*/
+
+	@Override
+	public Cluster getCluster() {
+		return delegate.getCluster();
+	}
 }
