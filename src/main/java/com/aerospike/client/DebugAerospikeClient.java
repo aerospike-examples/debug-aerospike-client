@@ -341,6 +341,16 @@ public class DebugAerospikeClient implements IAerospikeClient {
 		delegate = new AerospikeClient(policy, hosts);
 	}
 
+	/**
+	 * Initialise the DebugAerospikeClient with another client which it will use as a proxy.
+	 * @param client
+	 * @param options
+	 */
+	public DebugAerospikeClient(IAerospikeClient client, Options options) {
+		this.delegate = client;
+		this.setOptions(options);
+	}
+
 	// -----------------------------
 	// Logging information
 	// -----------------------------
